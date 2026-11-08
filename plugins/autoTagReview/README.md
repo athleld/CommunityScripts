@@ -1,5 +1,7 @@
 # Auto Tag Review
 
+This is a WIP and is very experimental.
+
 Proposes tags for scenes from their title, details and file path, and lets you
 review them inline in the scene **Tagger** view (`Scenes → Tagger`).
 

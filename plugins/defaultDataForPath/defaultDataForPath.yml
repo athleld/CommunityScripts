@@ -1,7 +1,10 @@
 name: Default Data For Path
 description: Adds configured Tags, Performers and/or Studio to all newly scanned Scenes, Images and Galleries.
-version: 1.1
+version: 1.2
 url: https://discourse.stashapp.cc/t/default-data-for-path/1373
+ui:
+  javascript:
+    - defaultDataForPathUI.js
 exec:
   - defaultDataForPath.js
 interface: js

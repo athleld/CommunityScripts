@@ -1,3 +1,6 @@
+// Rules are normally edited in Settings > Plugins > Default Data For Path and
+// stored in the plugin setting "rules". This array is only used as a fallback
+// when no rules have been saved from the UI.
 var jsonData = [
   {
     name: "OPTIONAL NAME - NOT USED IN SCRIPT",
@@ -16,7 +19,29 @@ function ok() {
   };
 }
 
+var PLUGIN_ID = "defaultDataForPath";
+
+// Load rules saved from the UI editor (plugin setting "rules", a JSON string).
+// Falls back to the jsonData array above when nothing has been saved.
+function loadRules() {
+  try {
+    var result = gql.Do("query { configuration { plugins } }", {});
+    var cfg = (result.configuration.plugins || {})[PLUGIN_ID] || {};
+    var raw = cfg.rules;
+    if (raw) {
+      var rules = typeof raw === "string" ? JSON.parse(raw) : raw;
+      if (rules && rules.length !== undefined) return rules;
+      log.Error("[DefaultDataForPath]: saved rules are not an array, using jsonData");
+    }
+  } catch (e) {
+    log.Error("[DefaultDataForPath]: could not load saved rules (" + e + "), using jsonData");
+  }
+  return jsonData;
+}
+
 function main() {
+  jsonData = loadRules();
+
   var hookContext = input.Args.hookContext;
   var type = hookContext.type;
   var ID = hookContext.id;
@@ -37,6 +62,10 @@ function main() {
   } else if (type === "Image.Create.Post") {
     itemPath = getImagePath(ID);
     name = "image";
+  }
+
+  if (!itemPath) {
+    return ok();
   }
 
   var defaultData = getDefaultData(itemPath);

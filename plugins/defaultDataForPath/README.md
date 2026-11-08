@@ -10,7 +10,7 @@ Big thanks to @WithoutPants - I based this entire script off of yours (markerTag
 
 ## Installation
 
-- Download the whole folder 'defaultDataForPath' (defaultDataForPath.js, defaultDataForPath.yml)
+- Download the whole folder 'defaultDataForPath' (defaultDataForPath.js, defaultDataForPathUI.js, defaultDataForPath.yml)
 - Place it in your **plugins** folder
 - Reload plugins (Settings > Plugins)
 - Default Data For Path (1.0) should appear. 
@@ -21,7 +21,12 @@ Big thanks to @WithoutPants - I based this entire script off of yours (markerTag
 
 ## Configuration
 
-- Edit **_jsonData_** array. Refer to Examples.
+- Open **Settings > Plugins > Default Data For Path**. A rule editor appears under the plugin entry:
+  - Add rules with a name, paths, studio, tags and performers (comma separated). **Browse…** opens Stash's folder picker, starting from your library folders.
+  - Rules with no paths are grouping rules: their studio/tags/performers pass down to their **child rules**.
+  - **Edit as JSON** shows the same rules in the format described under Examples, handy for pasting in an existing `jsonData` array.
+  - Click **Save rules**. Rules are stored in the plugin setting `rules`.
+- If no rules have been saved from the UI, the plugin falls back to the **_jsonData_** array in `defaultDataForPath.js`. Refer to Examples.
 
 ## Notes
 - Remember to escape file paths!

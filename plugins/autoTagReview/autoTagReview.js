@@ -657,8 +657,7 @@
     var runBtn = h(
       Button,
       {
-        size: "sm",
-        variant: "secondary",
+        variant: "primary",
         className: "atr-run",
         disabled: row && (row.status === "loading" || row.status === "saving"),
         onClick: function () {
@@ -728,7 +727,6 @@
           ? h(
               Button,
               {
-                size: "sm",
                 variant: "primary",
                 disabled: row.status === "saving",
                 title: "Add checked tags; unchecked chips you clicked are recorded as rejected",
@@ -743,7 +741,6 @@
           ? h(
               Button,
               {
-                size: "sm",
                 variant: "secondary",
                 title: "Reject every proposal for this scene; they won't be proposed again",
                 onClick: function () {
@@ -789,7 +786,7 @@
       h(
         Button,
         {
-          variant: "secondary",
+          variant: "primary",
           disabled: busy,
           onClick: function () {
             run(targetIds());
@@ -818,7 +815,7 @@
           variant: "minimal",
           className: "ml-1 atr-reload",
           disabled: busy,
-          title: "Reload tags and rules.yaml",
+          title: "Reload tags and rules.json",
           onClick: function () {
             enginePromise = null;
             idbSet(CACHE_KEY, null);

@@ -125,4 +125,9 @@ Learning a rule changes which phrases match, so old scores can go stale.
 Notes from testing phases 1–3 on the real library. Add items here; anything
 that changes this plan gets folded into the sections above before work starts.
 
-- _(pending)_
+- **PyYAML required on install** (fixed in 0.3.1): the rules file is now
+  `rules.json`, read with the standard library. Plain JSON plus whole-line `//`
+  comments.
+- **Buttons didn't match Stash's** (fixed in 0.3.1): they are now default-size
+  primary buttons like "Scrape by fragment" and "Scrape All". Dismiss stays
+  secondary.

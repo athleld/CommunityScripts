@@ -31,23 +31,35 @@ class BackendTest(unittest.TestCase):
         self.tmp.cleanup()
 
     def write_rules(self, text):
-        with open(os.path.join(self.dir, "rules.yaml"), "w", encoding="utf-8") as f:
+        with open(os.path.join(self.dir, "rules.json"), "w", encoding="utf-8") as f:
             f.write(text)
 
     def test_load_seeds_rules_from_example(self):
         out = call(self.dir, {"op": "load"})
         self.assertIsNone(out["error"])
         self.assertIn("welcome home", out["output"]["rules"]["stoplist"])
-        self.assertTrue(os.path.exists(os.path.join(self.dir, "rules.yaml")))
+        self.assertTrue(os.path.exists(os.path.join(self.dir, "rules.json")))
         self.assertEqual(out["output"]["rejected"], [])
         self.assertEqual(out["output"]["scores"], {})
+
+    def test_bad_json_reports_line(self):
+        self.write_rules('// ok\n{\n  "tags": {,}\n}\n')
+        err = call(self.dir, {"op": "load"})["error"]
+        self.assertIn("rules.json is not valid JSON", err)
+        self.assertIn("line 3", err)
+
+    def test_empty_rules_file_is_empty_rules(self):
+        self.write_rules("// nothing yet\n")
+        out = call(self.dir, {"op": "load"})
+        self.assertIsNone(out["error"])
+        self.assertEqual(out["output"]["rules"]["tags"], {})
 
     def test_unknown_op_reports_error(self):
         out = call(self.dir, {"op": "nope"})
         self.assertIn("unknown op", out["error"])
 
-    def test_learn_merges_under_rules_yaml(self):
-        self.write_rules("tags:\n  Home:\n    mode: review\n    exclude: [welcome home]\n")
+    def test_learn_merges_under_rules_json(self):
+        self.write_rules('// comment\n{"tags": {"Home": {"mode": "review", "exclude": ["welcome home"]}}}\n')
         self.assertIsNone(call(self.dir, {"op": "learn", "action": "exclude", "tag": "home", "phrase": "Home Alone"})["error"])
         call(self.dir, {"op": "learn", "action": "exclude", "tag": "Home", "phrase": "welcome home"})
         call(self.dir, {"op": "learn", "action": "auto", "tag": "Pants", "phrase": "pants off"})

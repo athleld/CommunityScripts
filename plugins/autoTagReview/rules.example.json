@@ -1,0 +1,36 @@
+// autoTagReview rules. Copied to rules.json on first load; edit rules.json.
+// Plain JSON, plus whole-line // comments like these. Tag keys are tag names
+// (case-insensitive). See README.md for the full schema.
+{
+  "settings": {
+    // smoothed precision needed to auto-check a chip, over at least minHits scenes
+    "autoThreshold": 0.8,
+    "minHits": 10,
+    // propose the child tag only
+    "dropParentWhenChild": true,
+    // "Black Leather" beats "Leather" on the same words
+    "preferLongest": true,
+    "maskPerformerFirstNames": true,
+    // multi-word phrases with no score yet are auto
+    "autoMultiWordUnscored": true
+  },
+
+  // Phrases removed from text before matching (like a studio name would be).
+  "stoplist": ["welcome home"],
+
+  // Extra path tokens to ignore (resolutions, codecs, extensions are built in).
+  "pathJunk": [],
+
+  // Per-tag rules. Example:
+  //   "Home": {
+  //     "mode": "review",              // auto | review | never
+  //     "match": ["at home"],          // extra phrases beyond name + aliases
+  //     "exclude": ["welcome home"],   // skip if this phrase is anywhere in the field
+  //     "fields": ["title", "path"],   // title | details | path
+  //     "inflect": "plural",           // plural (default) | both | none
+  //     "ignore": ["house"],           // don't match via these names/aliases/phrases
+  //     "auto_phrases": ["at home"]    // pre-check when one of these matched
+  //   },
+  //   "Pants": { "require_any": { "words": ["removed", "pulled", "off"], "window": 3 } }
+  "tags": {}
+}

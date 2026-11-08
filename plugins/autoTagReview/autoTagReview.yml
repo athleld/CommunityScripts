@@ -1,6 +1,6 @@
 name: Auto Tag Review (wip do not use)
 description: Proposes tags from scene titles, details and paths, with entity masking and per-tag rules, and lets you review them inline in the scene Tagger view.
-version: 0.3.0
+version: 0.3.1
 url: https://github.com/athleld/CommunityScripts/tree/main/plugins/autoTagReview
 exec:
   - python

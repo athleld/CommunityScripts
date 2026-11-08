@@ -11,7 +11,7 @@ Unlike substring auto-tagging, it:
 - masks the scene's studio (and its parent), performers and groups before matching,
   so "Guys in SweatPants" as a studio doesn't propose `Pants`;
 - never matches across punctuation or folder boundaries;
-- supports a stoplist ("welcome home") and per-tag rules in `rules.yaml`;
+- supports a stoplist ("welcome home") and per-tag rules in `rules.json`;
 - splits proposals into **auto** (pre-checked, green) and **review**
   (unchecked, amber, dashed). Single words and matches from details default to review.
 
@@ -25,7 +25,7 @@ In the Tagger view:
   matched, in which field, and what was masked. **Save** adds the checked tags.
   When nothing is checked, **Dismiss all** rejects every proposal for the scene.
 - **Save auto-tags** (header) adds all checked chips on the page.
-- **↻** reloads tags and `rules.yaml` on the next run.
+- **↻** reloads tags and `rules.json` on the next run.
 
 Tags are only ever **added** (`bulkSceneUpdate` in ADD mode). Nothing is removed.
 
@@ -50,32 +50,39 @@ re-match the scenes still on the page:
 | **Ignore "phrase"** | Stop matching this tag via that name, alias or phrase |
 | **Always auto** | Pre-check this tag whenever that phrase matches |
 
-`learned.json` is merged under `rules.yaml`: lists are combined, and anything
-set in `rules.yaml` wins.
+`learned.json` is merged under `rules.json`: lists are combined, and anything
+set in `rules.json` wins.
 
 ## Install
 
 Copy this folder into Stash's `plugins` directory and reload plugins.
-The backend needs Python with PyYAML (`pip install pyyaml`).
-On first run, `rules.example.yaml` is copied to `rules.yaml`. Edit that file;
-it is not overwritten by updates.
+The backend needs only Python (standard library, no extra packages).
+On first run, `rules.example.json` is copied to `rules.json`. Edit that file;
+it is not overwritten by updates. It is plain JSON, plus whole-line `//`
+comments.
 
 ## Rules
 
-See `rules.example.yaml` and `DESIGN.md`. Per tag (keyed by tag name):
+See `rules.example.json` and `DESIGN.md`. Per tag (keyed by tag name):
 
-```yaml
-tags:
-  Home:
-    mode: review              # auto | review | never
-    match: ["at home"]         # extra phrases beyond name + aliases
-    exclude: ["welcome home"]  # skip if this phrase appears in the field
-    fields: [title, path]      # title | details | path
-    ignore: ["house"]          # don't match this tag via these names/aliases
-    auto_phrases: ["at home"]  # pre-check when one of these matched
-  Pants:
-    require_any: { words: [off, pulled], window: 3 }
+```jsonc
+{
+  "tags": {
+    "Home": {
+      "mode": "review",              // auto | review | never
+      "match": ["at home"],          // extra phrases beyond name + aliases
+      "exclude": ["welcome home"],   // skip if this phrase appears in the field
+      "fields": ["title", "path"],   // title | details | path
+      "ignore": ["house"],           // don't match this tag via these names/aliases
+      "auto_phrases": ["at home"]    // pre-check when one of these matched
+    },
+    "Pants": { "require_any": { "words": ["off", "pulled"], "window": 3 } }
+  }
+}
 ```
+
+Only whole-line `//` comments are allowed (the inline ones above are for
+illustration).
 
 ## Development
 

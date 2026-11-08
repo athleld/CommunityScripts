@@ -2,11 +2,12 @@
 
 Called from the UI through runPluginOperation(plugin_id: "autoTagReview",
 args: {op: ...}). Raw plugin interface: reads one JSON object from stdin and
-writes {"output": ..., "error": ...} to stdout. Standard library + PyYAML only.
+writes {"output": ..., "error": ...} to stdout. Standard library only.
 
 Files (in the plugin dir, or $ATR_DATA_DIR for tests):
-  rules.yaml       hand-edited, never written here (seeded from the example)
-  learned.json     rules learned from review actions, merged under rules.yaml
+  rules.json       hand-edited, never written here (seeded from the example;
+                   whole-line // comments allowed)
+  learned.json     rules learned from review actions, merged under rules.json
   decisions.jsonl  append-only accept/reject log per (scene, tag)
   scores.json      precision per "tagId|phrase|field" (written by scoring)
 """
@@ -19,8 +20,8 @@ import time
 
 PLUGIN_DIR = os.path.dirname(os.path.abspath(__file__))
 DATA_DIR = os.environ.get("ATR_DATA_DIR") or PLUGIN_DIR
-RULES_FILE = os.path.join(DATA_DIR, "rules.yaml")
-RULES_EXAMPLE = os.path.join(PLUGIN_DIR, "rules.example.yaml")
+RULES_FILE = os.path.join(DATA_DIR, "rules.json")
+RULES_EXAMPLE = os.path.join(PLUGIN_DIR, "rules.example.json")
 LEARNED_FILE = os.path.join(DATA_DIR, "learned.json")
 DECISIONS_FILE = os.path.join(DATA_DIR, "decisions.jsonl")
 SCORES_FILE = os.path.join(DATA_DIR, "scores.json")
@@ -33,21 +34,29 @@ VERDICTS = ("accept", "reject")
 # ----------------------------------------------------------------- files
 
 
+def strip_line_comments(text):
+    """Allow whole-line // comments in rules.json. Lines are blanked rather
+    than removed so JSON error line numbers still match the file."""
+    return "\n".join(
+        "" if line.lstrip().startswith("//") else line for line in text.split("\n")
+    )
+
+
 def load_rules():
     if not os.path.exists(RULES_FILE) and os.path.exists(RULES_EXAMPLE):
         shutil.copyfile(RULES_EXAMPLE, RULES_FILE)
     if not os.path.exists(RULES_FILE):
         return {}
+    with open(RULES_FILE, "r", encoding="utf-8-sig") as f:
+        text = strip_line_comments(f.read())
+    if not text.strip():
+        return {}
     try:
-        import yaml
-    except ImportError:
-        raise RuntimeError(
-            "PyYAML is required to read rules.yaml (pip install pyyaml)"
-        )
-    with open(RULES_FILE, "r", encoding="utf-8") as f:
-        data = yaml.safe_load(f) or {}
+        data = json.loads(text)
+    except ValueError as e:
+        raise RuntimeError("rules.json is not valid JSON: %s" % e)
     if not isinstance(data, dict):
-        raise RuntimeError("rules.yaml must contain a mapping at the top level")
+        raise RuntimeError("rules.json must contain an object at the top level")
     return data
 
 
@@ -103,8 +112,8 @@ def union(a, b):
 
 
 def merge_rules(rules, learned):
-    """learned.json under rules.yaml: lists are unioned, scalars from
-    rules.yaml win."""
+    """learned.json under rules.json: lists are unioned, scalars from
+    rules.json win."""
     merged = copy.deepcopy(rules) if rules else {}
     merged["stoplist"] = union(merged.get("stoplist"), learned.get("stoplist"))
     tags = merged.get("tags") or {}

@@ -1,4 +1,5 @@
-rules.yaml
+rules.json
 learned.json
 decisions.jsonl
 scores.json
+__pycache__/

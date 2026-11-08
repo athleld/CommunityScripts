@@ -134,6 +134,17 @@
       .then(function (found) { return rules.map(function (r) { return toForm(r, found); }); });
   }
 
+  // name -> id for every resolved item in the form tree (saved as "ids").
+  function collectIds(forms, acc) {
+    forms.forEach(function (f) {
+      f.tags.forEach(function (x) { if (x.id) acc.tags[x.name] = x.id; });
+      f.performers.forEach(function (x) { if (x.id) acc.performers[x.name] = x.id; });
+      if (f.studio && f.studio.id) acc.studios[f.studio.name] = f.studio.id;
+      collectIds(f.children, acc);
+    });
+    return acc;
+  }
+
   function itemNames(items) {
     return items.map(function (x) { return x.name; }).filter(Boolean);
   }
@@ -453,16 +464,25 @@
       update(next);
     }
     function save() {
-      var payload;
+      var formsReady;
       if (rawText !== null) {
-        try { payload = parseRules(rawText); }
+        var parsed;
+        try { parsed = parseRules(rawText); }
         catch (err) { setStatus(Object.assign({}, status, { err: "Invalid JSON: " + err.message })); return; }
-        loadForm(payload).then(function (forms) { setRules(forms); setRawText(null); });
+        // Resolve the pasted names first so their ids are saved too.
+        formsReady = loadForm(parsed).then(function (forms) { setRules(forms); setRawText(null); return forms; });
       } else {
-        payload = rules.map(fromForm);
+        formsReady = Promise.resolve(rules);
       }
       setStatus({ dirty: true, saving: true, msg: null, err: null });
-      savePluginSettings({ rules: JSON.stringify(payload) })
+      formsReady
+        .then(function (forms) {
+          // "ids" lets the scan hook skip name lookups entirely.
+          return savePluginSettings({
+            rules: JSON.stringify(forms.map(fromForm)),
+            ids: JSON.stringify(collectIds(forms, { tags: {}, performers: {}, studios: {} })),
+          });
+        })
         .then(function () { setStatus({ dirty: false, saving: false, msg: "Saved.", err: null }); })
         .catch(function (err) { setStatus({ dirty: true, saving: false, msg: null, err: err.message }); });
     }

@@ -20,306 +20,265 @@ function ok() {
 }
 
 var PLUGIN_ID = "defaultDataForPath";
+var LOG = "[DefaultDataForPath]: ";
 
-// Load rules saved from the UI editor (plugin setting "rules", a JSON string).
-// Falls back to the jsonData array above when nothing has been saved.
-function loadRules() {
+// Per hook type: the GraphQL root field, the update mutation, and how to read
+// the item's path. One request fetches the plugin config and the path together.
+var ITEM_TYPES = {
+  "Scene.Create.Post": {
+    name: "scene",
+    query: "findScene(id: $id) { files { path } }",
+    field: "findScene",
+    update: "sceneUpdate(input: $input) { id }",
+    inputType: "SceneUpdateInput",
+    path: function (item) {
+      return item.files && item.files[0] ? item.files[0].path : null;
+    },
+  },
+  "Image.Create.Post": {
+    name: "image",
+    query:
+      "findImage(id: $id) { visual_files { ... on ImageFile { path } ... on VideoFile { path } } }",
+    field: "findImage",
+    update: "imageUpdate(input: $input) { id }",
+    inputType: "ImageUpdateInput",
+    path: function (item) {
+      return item.visual_files && item.visual_files[0]
+        ? item.visual_files[0].path
+        : null;
+    },
+  },
+  "Gallery.Create.Post": {
+    name: "gallery",
+    // Folder galleries have a folder; zip galleries have a file instead.
+    query: "findGallery(id: $id) { folder { path } files { path } }",
+    field: "findGallery",
+    update: "galleryUpdate(input: $input) { id }",
+    inputType: "GalleryUpdateInput",
+    path: function (item) {
+      if (item.folder) return item.folder.path;
+      return item.files && item.files[0] ? item.files[0].path : null;
+    },
+  },
+};
+
+// What each lookup kind is called in GraphQL.
+var KINDS = {
+  tags: { find: "findTags", list: "tags", filter: "tag_filter", label: "TAG" },
+  performers: {
+    find: "findPerformers",
+    list: "performers",
+    filter: "performer_filter",
+    label: "PERFORMER",
+  },
+  studios: {
+    find: "findStudios",
+    list: "studios",
+    filter: "studio_filter",
+    label: "STUDIO",
+  },
+};
+
+function parseSetting(raw) {
+  if (!raw) return null;
+  return typeof raw === "string" ? JSON.parse(raw) : raw;
+}
+
+// Rules saved from the UI editor (setting "rules"), or the jsonData array
+// above when nothing has been saved. Also returns the name -> id map the
+// editor saves (setting "ids") so names usually need no lookup at all.
+function readConfig(plugins) {
+  var cfg = (plugins || {})[PLUGIN_ID] || {};
+  var rules = jsonData;
+  var ids = { tags: {}, performers: {}, studios: {} };
   try {
-    var result = gql.Do("query { configuration { plugins } }", {});
-    var cfg = (result.configuration.plugins || {})[PLUGIN_ID] || {};
-    var raw = cfg.rules;
-    if (raw) {
-      var rules = typeof raw === "string" ? JSON.parse(raw) : raw;
-      if (rules && rules.length !== undefined) return rules;
-      log.Error("[DefaultDataForPath]: saved rules are not an array, using jsonData");
+    var saved = parseSetting(cfg.rules);
+    if (saved && saved.length !== undefined) rules = saved;
+    else if (saved) log.Error(LOG + "saved rules are not an array, using jsonData");
+  } catch (e) {
+    log.Error(LOG + "could not parse saved rules (" + e + "), using jsonData");
+  }
+  try {
+    var savedIds = parseSetting(cfg.ids);
+    if (savedIds) {
+      for (var k in ids) if (savedIds[k]) ids[k] = savedIds[k];
     }
   } catch (e) {
-    log.Error("[DefaultDataForPath]: could not load saved rules (" + e + "), using jsonData");
+    log.Warn(LOG + "could not parse saved ids (" + e + "), looking names up");
   }
-  return jsonData;
+  return { rules: rules, ids: ids };
+}
+
+// Resolve names to ids in at most two requests: one exact-name query for every
+// name (via aliases), then one fuzzy q query for whatever is still missing, so
+// aliases and loosely typed names still work. `wanted` is {kind: [names]}.
+function lookupIds(wanted) {
+  var found = { tags: {}, performers: {}, studios: {} };
+  var pending = [];
+  for (var kind in wanted) {
+    for (var i = 0; i < wanted[kind].length; i++) {
+      pending.push({ kind: kind, name: wanted[kind][i] });
+    }
+  }
+  var passes = [
+    function (k, v) {
+      return k.filter + ": { name: { value: " + v + ", modifier: EQUALS } }, filter: { per_page: 1 }";
+    },
+    function (k, v) {
+      return "filter: { q: " + v + ", per_page: 1 }";
+    },
+  ];
+  for (var p = 0; p < passes.length && pending.length; p++) {
+    var defs = [];
+    var parts = [];
+    var vars = {};
+    for (var j = 0; j < pending.length; j++) {
+      var k = KINDS[pending[j].kind];
+      defs.push("$v" + j + ": String!");
+      vars["v" + j] = pending[j].name;
+      parts.push("q" + j + ": " + k.find + "(" + passes[p](k, "$v" + j) + ") { " + k.list + " { id } }");
+    }
+    var result = gql.Do("query (" + defs.join(", ") + ") { " + parts.join(" ") + " }", vars);
+    var still = [];
+    for (var j = 0; j < pending.length; j++) {
+      var list = result["q" + j] ? result["q" + j][KINDS[pending[j].kind].list] : [];
+      if (list && list[0]) found[pending[j].kind][pending[j].name] = list[0].id;
+      else still.push(pending[j]);
+    }
+    pending = still;
+  }
+  for (var m = 0; m < pending.length; m++) {
+    log.Error(KINDS[pending[m].kind].label + " " + pending[m].name + " DOES NOT EXIST IN STASH!");
+  }
+  return found;
+}
+
+// names -> ids, using the saved map first and one batched lookup for the rest.
+// With useCache false every name is looked up fresh.
+function resolveAll(names, cache, useCache) {
+  var resolved = { tags: {}, performers: {}, studios: {} };
+  var missing = {};
+  var anyMissing = false;
+  for (var kind in names) {
+    missing[kind] = [];
+    for (var i = 0; i < names[kind].length; i++) {
+      var n = names[kind][i];
+      if (useCache && cache[kind][n]) resolved[kind][n] = cache[kind][n];
+      else {
+        missing[kind].push(n);
+        anyMissing = true;
+      }
+    }
+  }
+  if (anyMissing) {
+    var looked = lookupIds(missing);
+    for (var lk in looked) {
+      for (var ln in looked[lk]) resolved[lk][ln] = looked[lk][ln];
+    }
+  }
+  return resolved;
+}
+
+function idsFor(list, map) {
+  var out = [];
+  for (var i = 0; i < list.length; i++) {
+    var id = map[list[i]];
+    // Two names (e.g. a name and its alias) can resolve to the same id.
+    if (id && stringNotAlreadyPresent(id, out)) out.push(id);
+  }
+  return out;
 }
 
 function main() {
-  jsonData = loadRules();
-
   var hookContext = input.Args.hookContext;
   var type = hookContext.type;
   var ID = hookContext.id;
+  var itemType = ITEM_TYPES[type];
 
-  if (!type || !ID) {
-    // just return
+  if (!itemType || !ID) {
     return ok();
   }
 
-  var itemPath;
-  var name = "";
-  if (type === "Scene.Create.Post") {
-    itemPath = getScenePath(ID);
-    name = "scene";
-  } else if (type === "Gallery.Create.Post") {
-    itemPath = getGalleryPath(ID);
-    name = "gallery";
-  } else if (type === "Image.Create.Post") {
-    itemPath = getImagePath(ID);
-    name = "image";
-  }
-
+  // Request 1: plugin config + the item's path.
+  var first = gql.Do(
+    "query ($id: ID!) { configuration { plugins } " + itemType.query + " }",
+    { id: ID }
+  );
+  var item = first[itemType.field];
+  var itemPath = item ? itemType.path(item) : null;
   if (!itemPath) {
     return ok();
   }
 
+  var config = readConfig(first.configuration.plugins);
+  jsonData = config.rules;
   var defaultData = getDefaultData(itemPath);
 
-  // create tags
-  var defaultTags = [];
+  // Collect names. Tags/performers accumulate; the last matching studio wins.
+  var names = { tags: [], performers: [], studios: [] };
   for (var p = 0; p < defaultData.length; p++) {
-    var tags = defaultData[p].tags;
-    if (tags) {
-      for (var t = 0; t < tags.length; t++) {
-        var tag = tags[t];
-        if (stringNotAlreadyPresent(tag, defaultTags)) defaultTags.push(tag);
+    var d = defaultData[p];
+    var lists = [
+      [d.tags, names.tags],
+      [d.performers, names.performers],
+    ];
+    for (var l = 0; l < lists.length; l++) {
+      var src = lists[l][0] || [];
+      for (var t = 0; t < src.length; t++) {
+        if (stringNotAlreadyPresent(src[t], lists[l][1])) lists[l][1].push(src[t]);
+      }
+    }
+    if (d.studio) names.studios = [d.studio];
+  }
+
+  if (!names.tags.length && !names.performers.length && !names.studios.length) {
+    return ok(); // nothing matched: no write at all
+  }
+
+  // Request 2 (usually the last): the update. If it fails, a saved id may be
+  // stale (item deleted since the rules were saved), so look every name up
+  // fresh and retry once.
+  var resolved = resolveAll(names, config.ids, true);
+  try {
+    applyData(itemType, ID, names, resolved);
+  } catch (e) {
+    log.Warn(LOG + "update failed (" + e + "), retrying with fresh lookups");
+    resolved = resolveAll(names, config.ids, false);
+    applyData(itemType, ID, names, resolved);
+  }
+  return ok();
+}
+
+function applyData(itemType, ID, names, resolved) {
+  var tagIds = idsFor(names.tags, resolved.tags);
+  var performerIds = idsFor(names.performers, resolved.performers);
+  var studioIds = idsFor(names.studios, resolved.studios);
+  if (!tagIds.length && !performerIds.length && !studioIds.length) {
+    return;
+  }
+
+  var updateInput = { id: ID };
+  if (tagIds.length) updateInput.tag_ids = tagIds;
+  if (performerIds.length) updateInput.performer_ids = performerIds;
+  if (studioIds.length) updateInput.studio_id = studioIds[0];
+
+  gql.Do(
+    "mutation ($input: " + itemType.inputType + "!) { " + itemType.update + " }",
+    { input: updateInput }
+  );
+
+  var added = [
+    ["tag", names.tags, resolved.tags],
+    ["performer", names.performers, resolved.performers],
+    ["studio", names.studios, resolved.studios],
+  ];
+  for (var a = 0; a < added.length; a++) {
+    for (var i = 0; i < added[a][1].length; i++) {
+      if (added[a][2][added[a][1][i]]) {
+        log.Info(LOG + "Added " + added[a][0] + " " + added[a][1][i] + " to " + itemType.name + " " + ID);
       }
     }
   }
-
-  // create studio
-  var addStudio = false;
-  var defaultStudioId = null;
-  var defaultStudio;
-  for (var p = 0; p < defaultData.length; p++) {
-    var studio = defaultData[p].studio;
-    if (studio) {
-      var studioId = getStudioId(studio);
-      if (studioId) {
-        defaultStudioId = studioId;
-        addStudio = true;
-        defaultStudio = studio;
-      }
-    }
-  }
-
-  // create performers
-  var defaultPerformers = [];
-  for (var p = 0; p < defaultData.length; p++) {
-    var performers = defaultData[p].performers;
-    if (performers) {
-      for (var t = 0; t < performers.length; t++) {
-        var performer = performers[t];
-        if (stringNotAlreadyPresent(performer, defaultPerformers))
-          defaultPerformers.push(performer);
-      }
-    }
-  }
-
-  // convert tags to tagIds
-  var addTags = false;
-  var defaultTagIds = [];
-  if (defaultTags) {
-    for (var i = defaultTags.length - 1; i >= 0; i--) {
-      var tagId = getTagId(defaultTags[i]);
-      tagId ? defaultTagIds.push(tagId) : defaultTags.pop();
-    }
-    if (defaultTagIds && defaultTagIds.length != 0) {
-      addTags = true;
-    }
-  }
-
-  // convert performers to performerIds
-  var addPerformers = false;
-  var defaultPerformerIds = [];
-  if (defaultPerformers) {
-    for (var i = defaultPerformers.length - 1; i >= 0; i--) {
-      var tagId = getPerformerId(defaultPerformers[i]);
-      tagId ? defaultPerformerIds.push(tagId) : defaultPerformers.pop();
-    }
-    if (defaultPerformerIds && defaultPerformerIds.length != 0) {
-      addPerformers = true;
-    }
-  }
-
-  // Apply all and log
-  var tags = addTags ? defaultTagIds : null;
-  var studio = addStudio ? defaultStudioId : null;
-  var performers = addPerformers ? defaultPerformerIds : null;
-
-  if (type === "Scene.Create.Post") {
-    setSceneData(ID, tags, studio, performers);
-  } else if (type === "Gallery.Create.Post") {
-    setGalleryData(ID, tags, studio, performers);
-  } else if (type === "Image.Create.Post") {
-    setImageData(ID, tags, studio, performers);
-  }
-
-  for (var o = 0; o < defaultTags.length; o++) {
-    log.Info(
-      "[DefaultDataForPath]: Added tag " +
-        defaultTags[o] +
-        " to " +
-        name +
-        " " +
-        ID
-    );
-  }
-  for (var o = 0; o < defaultPerformers.length; o++) {
-    log.Info(
-      "[DefaultDataForPath]: Added performer " +
-        defaultPerformers[o] +
-        " to " +
-        name +
-        " " +
-        ID
-    );
-  }
-  addStudio
-    ? log.Info(
-        "[DefaultDataForPath]: Added studio " +
-          defaultStudio +
-          " to " +
-          name +
-          " " +
-          ID
-      )
-    : "";
-}
-
-function getScenePath(ID) {
-  var query =
-    "\
-query findScene($id: ID) {\
-    findScene(id: $id) {\
-        files {\
-            path\
-        }\
-    }\
-}";
-
-  var variables = {
-    id: ID,
-  };
-
-  var result = gql.Do(query, variables);
-  var findScene = result.findScene;
-  if (!findScene) {
-    return null;
-  }
-
-  var path = findScene.files[0].path;
-  return path;
-}
-
-function getImagePath(ID) {
-  var query =
-    "\
-query findImage($id: ID) {\
-    findImage(id: $id) {\
-        visual_files {\
-            ... on ImageFile {\
-                path\
-            }\
-        }\
-    }\
-}";
-
-  var variables = {
-    id: ID,
-  };
-
-  var result = gql.Do(query, variables);
-  var findImage = result.findImage;
-  if (!findImage) {
-    return null;
-  }
-
-  var path = findImage["visual_files"][0].path;
-  return path;
-}
-
-function getGalleryPath(ID) {
-  var query =
-    "\
-query findGallery($id: ID!) {\
-    findGallery(id: $id) {\
-        folder {\
-            path\
-        }\
-    }\
-}";
-
-  var variables = {
-    id: ID,
-  };
-
-  var result = gql.Do(query, variables);
-  var findGallery = result.findGallery;
-  if (!findGallery) {
-    return null;
-  }
-
-  var path = findGallery.folder.path;
-  return path;
-}
-
-function getTagId(tagName) {
-  // Exact name match first (the UI pickers store exact names), then fall back
-  // to the fuzzy q search so aliases and hand-typed names still resolve.
-  var exact = gql.Do(
-    "query ($n: String!) { findTags(tag_filter: { name: { value: $n, modifier: EQUALS } }, filter: { per_page: 1 }) { tags { id } } }",
-    { n: tagName }
-  );
-  if (exact.findTags.tags[0]) {
-    return exact.findTags.tags[0].id;
-  }
-  var fuzzy = gql.Do(
-    "query ($f: FindFilterType!) { findTags(filter: $f) { tags { id } } }",
-    { f: { q: tagName } }
-  );
-  if (fuzzy.findTags.tags[0]) {
-    return fuzzy.findTags.tags[0].id;
-  }
-  log.Error("TAG " + tagName + " DOES NOT EXIST IN STASH!");
-  return null;
-}
-
-function getPerformerId(performerName) {
-  // Exact name match first (the UI pickers store exact names), then fall back
-  // to the fuzzy q search so aliases and hand-typed names still resolve.
-  var exact = gql.Do(
-    "query ($n: String!) { findPerformers(performer_filter: { name: { value: $n, modifier: EQUALS } }, filter: { per_page: 1 }) { performers { id } } }",
-    { n: performerName }
-  );
-  if (exact.findPerformers.performers[0]) {
-    return exact.findPerformers.performers[0].id;
-  }
-  var fuzzy = gql.Do(
-    "query ($f: FindFilterType!) { findPerformers(filter: $f) { performers { id } } }",
-    { f: { q: performerName } }
-  );
-  if (fuzzy.findPerformers.performers[0]) {
-    return fuzzy.findPerformers.performers[0].id;
-  }
-  log.Error("PERFORMER " + performerName + " DOES NOT EXIST IN STASH!");
-  return null;
-}
-
-function getStudioId(studioName) {
-  // Exact name match first (the UI pickers store exact names), then fall back
-  // to the fuzzy q search so aliases and hand-typed names still resolve.
-  var exact = gql.Do(
-    "query ($n: String!) { findStudios(studio_filter: { name: { value: $n, modifier: EQUALS } }, filter: { per_page: 1 }) { studios { id } } }",
-    { n: studioName }
-  );
-  if (exact.findStudios.studios[0]) {
-    return exact.findStudios.studios[0].id;
-  }
-  var fuzzy = gql.Do(
-    "query ($f: FindFilterType!) { findStudios(filter: $f) { studios { id } } }",
-    { f: { q: studioName } }
-  );
-  if (fuzzy.findStudios.studios[0]) {
-    return fuzzy.findStudios.studios[0].id;
-  }
-  log.Error("STUDIO " + studioName + " DOES NOT EXIST IN STASH!");
-  return null;
 }
 
 function stringNotAlreadyPresent(text, itemArray) {
@@ -426,79 +385,6 @@ function stringContains(value, searchFor) {
     v2 = v2.toLowerCase();
   }
   return v.indexOf(v2) > -1;
-}
-
-function containsElem(items, elem) {
-  for (var i = 0; i < items.length; i++) {
-    var item = items[i].toLowerCase();
-    if (item.equals(elem)) {
-      return true;
-    }
-  }
-  return false;
-}
-
-function setSceneData(sceneID, tagIDs, studioID, performerIds) {
-  var mutation =
-    "\
-mutation sceneUpdate($input: SceneUpdateInput!) {\
-  sceneUpdate(input: $input) {\
-    id\
-  }\
-}";
-
-  var variables = {
-    input: {
-      id: sceneID,
-      tag_ids: tagIDs,
-      studio_id: studioID,
-      performer_ids: performerIds,
-    },
-  };
-
-  gql.Do(mutation, variables);
-}
-
-function setImageData(sceneID, tagIDs, studioID, performerIds) {
-  var mutation =
-    "\
-mutation imageUpdate($input: ImageUpdateInput!) {\
-    imageUpdate(input: $input) {\
-    id\
-  }\
-}";
-
-  var variables = {
-    input: {
-      id: sceneID,
-      tag_ids: tagIDs,
-      studio_id: studioID,
-      performer_ids: performerIds,
-    },
-  };
-
-  gql.Do(mutation, variables);
-}
-
-function setGalleryData(sceneID, tagIDs, studioID, performerIds) {
-  var mutation =
-    "\
-mutation galleryUpdate($input: GalleryUpdateInput!) {\
-    galleryUpdate(input: $input) {\
-    id\
-  }\
-}";
-
-  var variables = {
-    input: {
-      id: sceneID,
-      tag_ids: tagIDs,
-      studio_id: studioID,
-      performer_ids: performerIds,
-    },
-  };
-
-  gql.Do(mutation, variables);
 }
 
 main();

@@ -1,3 +1,14 @@
+# Fork
+
+This fork has enhancements to
+
+- defaultDataForPath
+  - Adds a UI in the plugin settings to edit and apply rules without editing json. Major improvement.
+
+You can add this as a source by adding this as a source:
+
+- <https://athleld.github.io/CommunityScripts/stable/index.yml>
+
 # CommunityScripts repository
 
 This repository contains plugins, themes, userscripts and other utility scripts created by the Stash community.

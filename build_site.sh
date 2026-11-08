@@ -14,11 +14,25 @@ fi
 rm -rf "$outdir"
 mkdir -p "$outdir"
 
-buildPlugin() 
+# Fork option: with ONLY_CHANGED_FROM=<ref> (e.g. upstream/main), only build
+# plugins/themes whose folder changed since this branch last synced with <ref>
+# (their merge-base). New folders count as changed; upstream changes not yet
+# merged here do not.
+changedBase=""
+if [ -n "$ONLY_CHANGED_FROM" ]; then
+    changedBase=$(git merge-base HEAD "$ONLY_CHANGED_FROM") || exit 1
+    echo "Only building folders changed since $changedBase"
+fi
+
+buildPlugin()
 {
     f=$1
 
     if grep -q "^#pkgignore" "$f"; then
+        return
+    fi
+
+    if [ -n "$changedBase" ] && git diff --quiet "$changedBase" HEAD -- "$(dirname "$f")"; then
         return
     fi
     

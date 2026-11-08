@@ -25,7 +25,9 @@ jobs:
           fetch-depth: "0"
       - run: |
           cd main
-          ./build_site.sh ../_site/stable
+          # Fork: list only plugins changed from upstream stashapp/CommunityScripts.
+          git fetch --no-tags https://github.com/stashapp/CommunityScripts main:refs/remotes/upstream/main
+          ONLY_CHANGED_FROM=upstream/main ./build_site.sh ../_site/stable
       - name: Checkout dev
         uses: actions/checkout@v2
         with:
@@ -35,7 +37,9 @@ jobs:
           fetch-depth: "0"
       - run: |
           cd dev
-          ../main/build_site.sh ../_site/develop
+          # Fork: list only plugins changed from upstream stashapp/CommunityScripts.
+          git fetch --no-tags https://github.com/stashapp/CommunityScripts main:refs/remotes/upstream/main
+          ONLY_CHANGED_FROM=upstream/main ../main/build_site.sh ../_site/develop
       - uses: actions/upload-pages-artifact@v3
 
   deploy:

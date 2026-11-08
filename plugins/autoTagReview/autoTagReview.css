@@ -109,10 +109,10 @@
   display: none;
   position: absolute;
   z-index: 1050;
-  top: calc(100% + 4px);
+  top: 100%;
   left: 0;
   width: max-content;
-  max-width: 28rem;
+  max-width: min(24rem, 60vw);
   padding: 0.4rem 0.5rem;
   border-radius: 0.3rem;
   background: #30404d;
@@ -146,4 +146,22 @@
 .atr-mask {
   opacity: 0.45;
   text-decoration: line-through;
+}
+.atr-ev-actions {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 0.25rem;
+  margin-top: 0.3rem;
+}
+.atr-act {
+  font-size: 0.72rem;
+  padding: 0.05rem 0.4rem;
+  border: 1px solid rgba(255, 255, 255, 0.25);
+  border-radius: 0.2rem;
+  background: transparent;
+  color: inherit;
+  cursor: pointer;
+}
+.atr-act:hover {
+  background: rgba(255, 255, 255, 0.12);
 }

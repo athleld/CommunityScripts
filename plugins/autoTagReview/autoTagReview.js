@@ -135,13 +135,21 @@
     });
   }
 
-  function loadBackend() {
-    return gql(RUN_OP_M, { args: { op: "load" } }).then(function (d) {
+  // Call a backend op. Stash may hand back the raw {output, error} envelope
+  // or just the output, depending on version; accept both.
+  function backend(args) {
+    return gql(RUN_OP_M, { args: args }).then(function (d) {
       var out = d.runPluginOperation;
-      if (out && out.output !== undefined && out.rules === undefined) out = out.output;
-      if (out && out.error) throw new Error(out.error);
+      if (out && typeof out === "object" && "error" in out && "output" in out) {
+        if (out.error) throw new Error(out.error);
+        out = out.output;
+      }
       return out || {};
     });
+  }
+
+  function loadBackend() {
+    return backend({ op: "load" });
   }
 
   function loadRoots() {
@@ -231,12 +239,16 @@
     };
   }
 
-  function run(ids) {
+  // preserve: keep the user's checked/touched state for chips that are still
+  // proposed (used when re-matching after a rule change).
+  function run(ids, preserve) {
     if (!ids.length) return Promise.resolve();
     store.set({ status: "loading", msg: "Loading tags and rules…" });
+    var prior = {};
     var pending = {};
     ids.forEach(function (id) {
-      pending[id] = { status: "loading", error: null };
+      prior[id] = store.state.rows[id];
+      if (!preserve) pending[id] = { status: "loading", error: null };
     });
     store.setRows(pending);
     return ensureEngine()
@@ -252,9 +264,16 @@
                 var patches = {};
                 d.findScenes.scenes.forEach(function (s) {
                   var res = eng.matcher.propose(toMatcherScene(s), { rejected: eng.rejected });
+                  var old = preserve && prior[s.id];
                   var checked = {};
+                  var touched = {};
                   res.proposals.forEach(function (p) {
-                    checked[p.tagId] = p.route === "auto";
+                    if (old && old.touched && old.touched[p.tagId]) {
+                      checked[p.tagId] = !!old.checked[p.tagId];
+                      touched[p.tagId] = true;
+                    } else {
+                      checked[p.tagId] = p.route === "auto";
+                    }
                   });
                   total += res.proposals.length;
                   patches[s.id] = {
@@ -262,6 +281,7 @@
                     proposals: res.proposals,
                     fields: res.fields,
                     checked: checked,
+                    touched: touched,
                     added: null,
                     error: null,
                   };
@@ -306,26 +326,78 @@
     }
   }
 
+  // Decisions for one row: accepted = checked chips; rejected = chips the
+  // user explicitly unchecked, or every unchecked chip when dismissing.
+  function rowDecisions(id, row, dismiss) {
+    var out = [];
+    (row.proposals || []).forEach(function (p) {
+      var on = !!(row.checked && row.checked[p.tagId]);
+      var touched = !!(row.touched && row.touched[p.tagId]);
+      var verdict = on ? "accept" : dismiss || touched ? "reject" : null;
+      if (!verdict) return;
+      var ev = p.evidence[0];
+      out.push({
+        scene: id,
+        tag: p.tagId,
+        tagName: p.tagName,
+        phrase: ev.phrase,
+        field: ev.field,
+        route: p.route,
+        verdict: verdict,
+      });
+    });
+    return out;
+  }
+
+  function recordDecisions(decisions) {
+    if (!decisions.length) return Promise.resolve();
+    if (enginePromise) {
+      enginePromise.then(function (eng) {
+        decisions.forEach(function (d) {
+          var key = d.scene + "|" + d.tag;
+          if (d.verdict === "reject") eng.rejected.add(key);
+          else eng.rejected.delete(key);
+        });
+      });
+    }
+    return backend({ op: "decide", decisions: decisions }).catch(function (e) {
+      store.set({ status: "error", msg: "Could not record decisions: " + e.message });
+    });
+  }
+
   // Save checked chips for the given scenes; scenes needing identical tag
   // sets are grouped into one bulkSceneUpdate (ADD mode never removes tags).
-  function save(ids) {
+  // opts.dismiss rejects every unchecked chip.
+  function save(ids, opts) {
+    opts = opts || {};
     var rows = store.state.rows;
     var groups = new Map();
     var saving = {};
+    var immediate = [];
     ids.forEach(function (id) {
       var row = rows[id];
       if (!row || row.status !== "ready") return;
       var tagIds = checkedTagIds(row).sort();
-      saving[id] = { status: tagIds.length ? "saving" : "saved", added: tagIds.length ? null : [] };
-      if (!tagIds.length) return;
+      var decisions = rowDecisions(id, row, opts.dismiss);
+      if (!tagIds.length) {
+        if (!decisions.length && !opts.dismiss) return;
+        saving[id] = { status: "saved", added: [] };
+        immediate = immediate.concat(decisions);
+        return;
+      }
+      saving[id] = { status: "saving" };
       var key = tagIds.join(",");
-      if (!groups.has(key)) groups.set(key, { tagIds: tagIds, ids: [] });
-      groups.get(key).ids.push(id);
+      if (!groups.has(key)) groups.set(key, { tagIds: tagIds, ids: [], decisions: [] });
+      var g = groups.get(key);
+      g.ids.push(id);
+      g.decisions = g.decisions.concat(decisions);
     });
     store.setRows(saving);
-    var jobs = Array.from(groups.values()).map(function (g) {
-      return gql(BULK_ADD_M, { ids: g.ids, tags: g.tagIds })
+    var jobs = [recordDecisions(immediate)];
+    Array.from(groups.values()).forEach(function (g) {
+      jobs.push(gql(BULK_ADD_M, { ids: g.ids, tags: g.tagIds })
         .then(function () {
+          recordDecisions(g.decisions);
           var done = {};
           g.ids.forEach(function (id) {
             var row = store.state.rows[id];
@@ -348,11 +420,44 @@
             failed[id] = { status: "ready", error: "Save failed: " + e.message };
           });
           store.setRows(failed);
-        });
+        }));
     });
     return Promise.all(jobs).then(function () {
-      if (jobs.length) return refreshSceneQueries();
+      if (groups.size) return refreshSceneQueries();
     });
+  }
+
+  // Re-match rows still under review with fresh rules, keeping choices.
+  function rematchVisible() {
+    enginePromise = null;
+    var ids = visibleIds().filter(function (id) {
+      var r = store.state.rows[id];
+      return r && r.status === "ready";
+    });
+    return run(ids, true);
+  }
+
+  // Persist a learned rule, then re-match so its effect shows immediately.
+  function learn(action, tagName, phrase) {
+    if (!phrase) return Promise.resolve();
+    store.set({ msg: "Saving rule…" });
+    return backend({ op: "learn", action: action, tag: tagName, phrase: phrase })
+      .then(rematchVisible)
+      .catch(function (e) {
+        store.set({ status: "error", msg: "Could not save rule: " + e.message });
+      });
+  }
+
+  // Context around a hit for prefilling exclude/stoplist prompts: the
+  // previous word + the matched text (or the match + next word at the start).
+  function contextPhrase(text, ev) {
+    var before = text.slice(0, ev.start).match(/([\p{L}\p{N}'’]+)[^\p{L}\p{N}]*$/u);
+    var hit = text.slice(ev.start, ev.end);
+    if (before && !/[,;:!?()|–—]/.test(text.slice(before.index + before[1].length, ev.start))) {
+      return before[1] + " " + hit;
+    }
+    var after = text.slice(ev.end).match(/^[\s._-]*([\p{L}\p{N}'’]+)/u);
+    return after ? hit + " " + after[1] : hit;
   }
 
   // ------------------------------------------------------------ DOM adapter
@@ -438,11 +543,57 @@
       (ev.variant ? " (inflected)" : "") +
       " · " +
       (ev.precision != null ? pct(ev.precision) + " of " + ev.hits : "unscored");
+    var tagName = props.p.tagName;
+    function act(label, title, fn) {
+      return h(
+        "button",
+        {
+          type: "button",
+          className: "atr-act",
+          title: title,
+          onClick: function (e) {
+            e.stopPropagation();
+            fn();
+          },
+        },
+        label
+      );
+    }
+    var actions = [
+      act("Exclude context…", "Never propose " + tagName + " when this " + ev.field + " contains a phrase", function () {
+        var v = window.prompt(
+          "Don't propose \"" + tagName + "\" when the " + ev.field + " contains:",
+          contextPhrase(field.text, ev)
+        );
+        if (v) learn("exclude", tagName, v);
+      }),
+      act("Stoplist…", "Mask a phrase before matching, for every tag", function () {
+        var v = window.prompt("Mask this phrase for every tag:", contextPhrase(field.text, ev));
+        if (v) learn("stoplist", null, v);
+      }),
+      act("Ignore “" + ev.phrase + "”", "Stop matching " + tagName + " via this phrase", function () {
+        if (
+          ev.source === "name" &&
+          !window.confirm("“" + ev.phrase + "” is the tag's own name. Stop matching " + tagName + " by name?")
+        ) {
+          return;
+        }
+        learn("ignore", tagName, ev.phrase);
+      }),
+    ];
+    if (props.p.route === "review") {
+      actions.push(
+        act("Always auto", "Pre-check " + tagName + " whenever “" + ev.phrase + "” matches", function () {
+          learn("auto", tagName, ev.phrase);
+        })
+      );
+    }
     return h(
       "div",
       { className: "atr-ev" },
       h("div", { className: "atr-ev-meta" }, meta),
-      h(Highlight, { text: field.text, masked: field.masked, ev: ev })
+      h(Highlight, { text: field.text, masked: field.masked, ev: ev }),
+      h("div", { className: "atr-ev-actions" }, actions)
     );
   }
 
@@ -459,6 +610,18 @@
         "aria-checked": on,
         tabIndex: 0,
         onClick: disabled ? undefined : props.onToggle,
+        onMouseEnter: function (e) {
+          // Shift the popover so it stays inside the viewport.
+          var chip = e.currentTarget;
+          var pop = chip.querySelector(".atr-pop");
+          if (!pop) return;
+          var left = chip.getBoundingClientRect().left;
+          var shift = 0;
+          var overflow = left + pop.offsetWidth - (window.innerWidth - 8);
+          if (overflow > 0) shift = -overflow;
+          if (left + shift < 8) shift = 8 - left;
+          pop.style.left = shift + "px";
+        },
         onKeyDown: function (e) {
           if (!disabled && (e.key === " " || e.key === "Enter")) {
             e.preventDefault();
@@ -470,9 +633,17 @@
       p.tagName,
       h(
         "div",
-        { className: "atr-pop" },
+        {
+          className: "atr-pop",
+          onClick: function (e) {
+            e.stopPropagation();
+          },
+          onKeyDown: function (e) {
+            e.stopPropagation();
+          },
+        },
         p.evidence.map(function (ev, i) {
-          return h(Evidence, { key: i, ev: ev, fields: props.fields });
+          return h(Evidence, { key: i, ev: ev, p: p, fields: props.fields });
         })
       )
     );
@@ -514,7 +685,7 @@
       body = h(
         "span",
         { className: "atr-saved" },
-        row.added && row.added.length ? "✓ Added: " + row.added.join(", ") : "Nothing added"
+        row.added && row.added.length ? "✓ Added: " + row.added.join(", ") : "Dismissed"
       );
     } else if (!proposals.length) {
       body = h("span", { className: "atr-muted" }, "No tags proposed");
@@ -530,10 +701,13 @@
             on: !!row.checked[p.tagId],
             disabled: row.status === "saving",
             onToggle: function () {
-              var checked = Object.assign({}, store.state.rows[id].checked);
+              var cur = store.state.rows[id];
+              var checked = Object.assign({}, cur.checked);
+              var touched = Object.assign({}, cur.touched);
               checked[p.tagId] = !checked[p.tagId];
+              touched[p.tagId] = true;
               var patch = {};
-              patch[id] = { checked: checked };
+              patch[id] = { checked: checked, touched: touched };
               store.setRows(patch);
             },
           });
@@ -550,18 +724,33 @@
       h(
         "div",
         { className: "atr-actions" },
-        !saved && proposals.length
+        !saved && proposals.length && nChecked
           ? h(
               Button,
               {
                 size: "sm",
                 variant: "primary",
-                disabled: row.status === "saving" || !nChecked,
+                disabled: row.status === "saving",
+                title: "Add checked tags; unchecked chips you clicked are recorded as rejected",
                 onClick: function () {
                   save([id]);
                 },
               },
               row.status === "saving" ? "Saving…" : "Save (" + nChecked + ")"
+            )
+          : null,
+        !saved && proposals.length && !nChecked
+          ? h(
+              Button,
+              {
+                size: "sm",
+                variant: "secondary",
+                title: "Reject every proposal for this scene; they won't be proposed again",
+                onClick: function () {
+                  save([id], { dismiss: true });
+                },
+              },
+              "Dismiss all"
             )
           : null,
         runBtn
@@ -704,10 +893,12 @@
   function schedule() {
     if (scheduled) return;
     scheduled = true;
-    requestAnimationFrame(function () {
+    // setTimeout rather than requestAnimationFrame: rAF is paused in
+    // background tabs, which would leave rows unmounted until refocus.
+    setTimeout(function () {
       scheduled = false;
       sync();
-    });
+    }, 30);
   }
   new MutationObserver(schedule).observe(document.body, { childList: true, subtree: true });
   // Checkbox state changes don't mutate the DOM tree; watch input events.

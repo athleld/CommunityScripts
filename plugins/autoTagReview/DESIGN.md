@@ -113,8 +113,16 @@ so it can later be swapped for real patch points (see §7).
   - **Save** (per row) applies the checked chips.
 - **Saving:** `bulkSceneUpdate` with `tag_ids: { mode: ADD }` through the app's
   Apollo client (`PluginApi.utils.StashService`), so the Tagger's own data
-  refreshes and nothing it holds is overwritten. Checked and unchecked chips are
-  both logged to `decisions.jsonl`.
+  refreshes and nothing it holds is overwritten. Checked chips are logged to
+  `decisions.jsonl` as accepted. Unchecked chips are logged as rejected only if
+  the user unchecked them explicitly, or pressed **Dismiss all**. Amber chips
+  that were never touched record nothing, so a page-wide save can't
+  mass-reject review chips nobody looked at.
+- **Rule actions** (`ignore` and `auto_phrases` were added to the rule schema in
+  phase 3): Exclude context… / Stoplist… (a prompt prefilled with the previous
+  word plus the match) / Ignore phrase / Always auto. Each one writes
+  `learned.json` and re-matches the rows still under review, keeping the
+  user's chip choices.
 - **Coexisting with Scrape:** the plugin's panel and Stash's scrape results sit side
   by side. Saving a scrape result in merge mode keeps tags the plugin added.
 

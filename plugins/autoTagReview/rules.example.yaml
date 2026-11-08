@@ -23,5 +23,7 @@ tags: {}
 #    exclude: ["welcome home"]  # skip if this phrase is anywhere in the field
 #    fields: [title, path]      # title | details | path
 #    inflect: plural            # plural (default) | both | none
+#    ignore: ["house"]          # don't match via these names/aliases/phrases
+#    auto_phrases: ["at home"]  # pre-check when one of these matched
 #  Pants:
 #    require_any: { words: [removed, pulled, off], window: 3 }

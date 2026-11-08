@@ -311,6 +311,8 @@
       match: (raw.match || []).map(normalizePhrase).filter(Boolean),
       exclude: (raw.exclude || []).map(normalizePhrase).filter(Boolean),
       fields: raw.fields ? new Set(raw.fields) : null,
+      ignore: new Set((raw.ignore || []).map(normalizePhrase).filter(Boolean)),
+      autoPhrases: new Set((raw.auto_phrases || []).map(normalizePhrase).filter(Boolean)),
       inflect: raw.inflect || "plural", // plural | both | none
       requireAny: null,
     };
@@ -394,7 +396,7 @@
       var seen = new Set();
       var add = function (text, source) {
         var key = source === "rule" ? text : normalizePhrase(text);
-        if (!key || seen.has(key)) return;
+        if (!key || seen.has(key) || rule.ignore.has(key)) return;
         seen.add(key);
         addPhrase(tag, key, source, rule);
       };
@@ -469,7 +471,9 @@
       var precision = sc ? (sc.tp + 1) / (sc.hits + 2) : null;
       var info = { precision: precision, hits: sc ? sc.hits : 0 };
       if (rule.mode === "never") return null;
-      if (rule.mode === "auto") return Object.assign({ route: "auto" }, info);
+      if (rule.mode === "auto" || rule.autoPhrases.has(phrase)) {
+        return Object.assign({ route: "auto" }, info);
+      }
       if (rule.mode === "review") return Object.assign({ route: "review" }, info);
       if (field === "details") return Object.assign({ route: "review" }, info);
       if (sc) {

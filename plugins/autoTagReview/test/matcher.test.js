@@ -177,6 +177,16 @@ test("mode never / auto / review", () => {
   assert.equal(find(res, "Home Video").route, "review");
 });
 
+test("ignore drops a phrase for one tag; auto_phrases promotes one phrase", () => {
+  const m = M.createMatcher(ALL, {
+    tags: { Sweaty: { ignore: ["sweating"] }, Home: { auto_phrases: ["home"] } },
+  });
+  const res = m.propose({ id: "1", title: "Sweating at Home", details: "sweaty" });
+  assert.equal(find(res, "Home").route, "auto");
+  const sw = find(res, "Sweaty");
+  assert.deepEqual(sw.evidence.map((e) => e.field), ["details"], "alias ignored, name still matches");
+});
+
 test("require_any needs a context word within the window", () => {
   const m = M.createMatcher(ALL, {
     tags: { Pants: { require_any: { words: ["off", "pulled"], window: 2 } } },

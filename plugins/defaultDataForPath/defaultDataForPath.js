@@ -260,81 +260,66 @@ query findGallery($id: ID!) {\
 }
 
 function getTagId(tagName) {
-  var query =
-    "\
-    query findTagId($filter: FindFilterType!) {\
-        findTags(filter: $filter) {\
-            tags {\
-                id\
-            }\
-        }\
-    }";
-
-  var variables = {
-    filter: {
-      q: tagName,
-    },
-  };
-
-  var result = gql.Do(query, variables);
-  if (result.findTags.tags[0]) {
-    return result.findTags.tags[0].id;
-  } else {
-    log.Error("TAG " + tagName + " DOES NOT EXIST IN STASH!");
-    return null;
+  // Exact name match first (the UI pickers store exact names), then fall back
+  // to the fuzzy q search so aliases and hand-typed names still resolve.
+  var exact = gql.Do(
+    "query ($n: String!) { findTags(tag_filter: { name: { value: $n, modifier: EQUALS } }, filter: { per_page: 1 }) { tags { id } } }",
+    { n: tagName }
+  );
+  if (exact.findTags.tags[0]) {
+    return exact.findTags.tags[0].id;
   }
+  var fuzzy = gql.Do(
+    "query ($f: FindFilterType!) { findTags(filter: $f) { tags { id } } }",
+    { f: { q: tagName } }
+  );
+  if (fuzzy.findTags.tags[0]) {
+    return fuzzy.findTags.tags[0].id;
+  }
+  log.Error("TAG " + tagName + " DOES NOT EXIST IN STASH!");
+  return null;
 }
 
 function getPerformerId(performerName) {
-  var query =
-    "\
-    query findPerformerId($filter: FindFilterType!) {\
-        findPerformers(filter: $filter) {\
-            performers {\
-                id\
-            }\
-        }\
-    }";
-
-  var variables = {
-    filter: {
-      q: performerName,
-    },
-  };
-
-  var result = gql.Do(query, variables);
-  if (result.findPerformers.performers[0]) {
-    return result.findPerformers.performers[0].id;
-  } else {
-    log.Error("PERFORMER " + performerName + " DOES NOT EXIST IN STASH!");
-    return null;
+  // Exact name match first (the UI pickers store exact names), then fall back
+  // to the fuzzy q search so aliases and hand-typed names still resolve.
+  var exact = gql.Do(
+    "query ($n: String!) { findPerformers(performer_filter: { name: { value: $n, modifier: EQUALS } }, filter: { per_page: 1 }) { performers { id } } }",
+    { n: performerName }
+  );
+  if (exact.findPerformers.performers[0]) {
+    return exact.findPerformers.performers[0].id;
   }
+  var fuzzy = gql.Do(
+    "query ($f: FindFilterType!) { findPerformers(filter: $f) { performers { id } } }",
+    { f: { q: performerName } }
+  );
+  if (fuzzy.findPerformers.performers[0]) {
+    return fuzzy.findPerformers.performers[0].id;
+  }
+  log.Error("PERFORMER " + performerName + " DOES NOT EXIST IN STASH!");
+  return null;
 }
 
 function getStudioId(studioName) {
-  var query =
-    "\
-    query findStudioId($filter: FindFilterType!) {\
-        findStudios(filter: $filter) {\
-            studios {\
-                id\
-            }\
-        }\
-    }";
-
-  var variables = {
-    filter: {
-      q: studioName,
-    },
-  };
-
-  var result = gql.Do(query, variables);
-  if (result.findStudios.studios[0]) {
-    return result.findStudios.studios[0].id;
-  } else {
-    log.Error("STUDIO " + studioName + " DOES NOT EXIST IN STASH!");
-    return null;
+  // Exact name match first (the UI pickers store exact names), then fall back
+  // to the fuzzy q search so aliases and hand-typed names still resolve.
+  var exact = gql.Do(
+    "query ($n: String!) { findStudios(studio_filter: { name: { value: $n, modifier: EQUALS } }, filter: { per_page: 1 }) { studios { id } } }",
+    { n: studioName }
+  );
+  if (exact.findStudios.studios[0]) {
+    return exact.findStudios.studios[0].id;
   }
+  var fuzzy = gql.Do(
+    "query ($f: FindFilterType!) { findStudios(filter: $f) { studios { id } } }",
+    { f: { q: studioName } }
+  );
+  if (fuzzy.findStudios.studios[0]) {
+    return fuzzy.findStudios.studios[0].id;
+  }
+  log.Error("STUDIO " + studioName + " DOES NOT EXIST IN STASH!");
+  return null;
 }
 
 function stringNotAlreadyPresent(text, itemArray) {

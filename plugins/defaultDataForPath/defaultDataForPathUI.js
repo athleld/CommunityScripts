@@ -63,21 +63,79 @@
   var uid = 0;
   function newKey() { return "r" + ++uid; }
 
+  // Rules are stored by name (what the hook looks up), but the pickers work
+  // with objects. In the form, tags/performers are arrays of {id, name} and
+  // studio is {id, name} or null. id is null when the name isn't in Stash
+  // (renamed or deleted); those are kept and shown as warnings.
+  var KINDS = {
+    tags: { find: "findTags", list: "tags", filter: "tag_filter" },
+    performers: { find: "findPerformers", list: "performers", filter: "performer_filter" },
+    studios: { find: "findStudios", list: "studios", filter: "studio_filter" },
+  };
+
+  function collectNames(rules, acc) {
+    rules.forEach(function (r) {
+      (r.tags || []).forEach(function (n) { acc.tags[n] = true; });
+      (r.performers || []).forEach(function (n) { acc.performers[n] = true; });
+      if (r.studio) acc.studios[r.studio] = true;
+      collectNames(r.children || [], acc);
+    });
+    return acc;
+  }
+
+  // One request: an exact-name lookup per distinct name, via query aliases.
+  // Returns { tags: {name: {id, name}}, performers: {...}, studios: {...} }.
+  function resolveNames(rules) {
+    var names = collectNames(rules, { tags: {}, performers: {}, studios: {} });
+    var parts = [], vars = {}, defs = [], keys = [];
+    Object.keys(KINDS).forEach(function (kind) {
+      Object.keys(names[kind]).forEach(function (n) {
+        var i = keys.length, k = KINDS[kind];
+        keys.push({ kind: kind, name: n });
+        defs.push("$v" + i + ":String!");
+        vars["v" + i] = n;
+        parts.push("q" + i + ":" + k.find + "(" + k.filter + ":{name:{value:$v" + i +
+          ",modifier:EQUALS}},filter:{per_page:1}){" + k.list + "{id name}}");
+      });
+    });
+    var out = { tags: {}, performers: {}, studios: {} };
+    if (!keys.length) return Promise.resolve(out);
+    return gql("query(" + defs.join(",") + "){" + parts.join(" ") + "}", vars).then(function (d) {
+      keys.forEach(function (key, i) {
+        var hit = d["q" + i] && d["q" + i][KINDS[key.kind].list][0];
+        if (hit) out[key.kind][key.name] = { id: hit.id, name: hit.name };
+      });
+      return out;
+    });
+  }
+
+  function lookupItem(map, name) {
+    return map[name] || { id: null, name: name };
+  }
+
   // Internal form: every rule gets a React key and normalised arrays.
-  function toForm(rule) {
+  function toForm(rule, found) {
+    found = found || { tags: {}, performers: {}, studios: {} };
     return {
       _key: newKey(),
       name: rule.name || "",
       paths: (rule.paths || []).slice(),
-      studio: rule.studio || "",
-      tags: (rule.tags || []).join(", "),
-      performers: (rule.performers || []).join(", "),
-      children: (rule.children || []).map(toForm),
+      studio: rule.studio ? lookupItem(found.studios, rule.studio) : null,
+      tags: (rule.tags || []).map(function (n) { return lookupItem(found.tags, n); }),
+      performers: (rule.performers || []).map(function (n) { return lookupItem(found.performers, n); }),
+      children: (rule.children || []).map(function (c) { return toForm(c, found); }),
     };
   }
 
-  function splitNames(s) {
-    return (s || "").split(",").map(function (x) { return x.trim(); }).filter(Boolean);
+  // Stored rules -> form rules, with names resolved against Stash.
+  function loadForm(rules) {
+    return resolveNames(rules)
+      .catch(function () { return null; })
+      .then(function (found) { return rules.map(function (r) { return toForm(r, found); }); });
+  }
+
+  function itemNames(items) {
+    return items.map(function (x) { return x.name; }).filter(Boolean);
   }
 
   // Stored form: drop empty fields so the JSON stays readable.
@@ -88,10 +146,10 @@
     // An explicit "" path means "match everything"; keep it if it was the only one.
     if (paths.length) out.paths = paths;
     else if (f.paths.length) out.paths = [""];
-    if (f.studio.trim()) out.studio = f.studio.trim();
-    var tags = splitNames(f.tags);
+    if (f.studio && f.studio.name) out.studio = f.studio.name;
+    var tags = itemNames(f.tags);
     if (tags.length) out.tags = tags;
-    var performers = splitNames(f.performers);
+    var performers = itemNames(f.performers);
     if (performers.length) out.performers = performers;
     if (f.children.length) out.children = f.children.map(fromForm);
     return out;
@@ -99,6 +157,65 @@
 
   function emptyRule() {
     return toForm({ paths: [] });
+  }
+
+  /* ---------- tag / performer / studio pickers ---------- */
+
+  function pickItems(items) {
+    return (items || []).map(function (x) { return { id: x.id, name: x.name }; });
+  }
+
+  // Comma-separated text box, used only if this Stash build doesn't expose
+  // the picker components.
+  function NamesInput(props) {
+    var t = React.useState(itemNames(props.items).join(", "));
+    var text = t[0], setText = t[1];
+    return e(B.Form.Control, {
+      className: "text-input", value: text,
+      placeholder: props.multi ? "Comma separated" : "",
+      onChange: function (ev) {
+        var v = ev.currentTarget.value;
+        setText(v);
+        var names = props.multi ? v.split(",") : [v];
+        props.onChange(names.map(function (n) { return n.trim(); }).filter(Boolean)
+          .map(function (n) { return { id: null, name: n }; }));
+      },
+    });
+  }
+
+  // A Stash picker (TagSelect / PerformerSelect / StudioSelect) for the items
+  // that exist, plus warning badges for stored names Stash no longer has.
+  function EntityPicker(props) {
+    var Select = api.components && api.components[props.component];
+    var items = props.items;
+    if (!Select) {
+      return e(NamesInput, { items: items, multi: props.multi, onChange: props.onChange });
+    }
+    var found = items.filter(function (x) { return x.id; });
+    var missing = items.filter(function (x) { return !x.id; });
+    return e("div", null,
+      e(Select, {
+        isMulti: props.multi,
+        isClearable: !props.multi,
+        values: found,
+        menuPortalTarget: document.body,
+        onSelect: function (sel) {
+          var picked = pickItems(sel);
+          props.onChange(props.multi ? picked.concat(missing) : picked.slice(0, 1));
+        },
+      }),
+      missing.length ? e("div", { className: "mt-1" },
+        missing.map(function (m) {
+          return e("span", { key: m.name, className: "badge badge-warning mr-1", title: "Not found in Stash; the hook will skip it" },
+            m.name + " (not found) ",
+            e("a", {
+              href: "#", className: "text-dark", onClick: function (ev) {
+                ev.preventDefault();
+                props.onChange(items.filter(function (x) { return x !== m; }));
+              },
+            }, "×"));
+        })) : null
+    );
   }
 
   function parseRules(raw) {
@@ -211,9 +328,9 @@
     var summary = [];
     if (rule.paths.length) summary.push(rule.paths.length + " path" + (rule.paths.length > 1 ? "s" : ""));
     else summary.push("no paths (inherits to children)");
-    if (rule.studio) summary.push("studio: " + rule.studio);
-    if (rule.tags.trim()) summary.push("tags: " + rule.tags);
-    if (rule.performers.trim()) summary.push("performers: " + rule.performers);
+    if (rule.studio) summary.push("studio: " + rule.studio.name);
+    if (rule.tags.length) summary.push("tags: " + itemNames(rule.tags).join(", "));
+    if (rule.performers.length) summary.push("performers: " + itemNames(rule.performers).join(", "));
     if (rule.children.length) summary.push(rule.children.length + " child rule" + (rule.children.length > 1 ? "s" : ""));
 
     var header = e("div", { className: "d-flex align-items-center", style: { gap: "0.5rem" } },
@@ -267,17 +384,18 @@
             ),
             "Leave empty to make this a grouping rule: its studio/tags/performers are passed down to its child rules."
           ),
-          field("Studio", e(B.Form.Control, {
-            className: "text-input", value: rule.studio,
-            onChange: function (ev) { set("studio", ev.currentTarget.value); },
+          field("Studio", e(EntityPicker, {
+            component: "StudioSelect", multi: false,
+            items: rule.studio ? [rule.studio] : [],
+            onChange: function (items) { set("studio", items[0] || null); },
           })),
-          field("Tags", e(B.Form.Control, {
-            className: "text-input", value: rule.tags, placeholder: "Comma separated",
-            onChange: function (ev) { set("tags", ev.currentTarget.value); },
+          field("Tags", e(EntityPicker, {
+            component: "TagSelect", multi: true, items: rule.tags,
+            onChange: function (items) { set("tags", items); },
           })),
-          field("Performers", e(B.Form.Control, {
-            className: "text-input", value: rule.performers, placeholder: "Comma separated",
-            onChange: function (ev) { set("performers", ev.currentTarget.value); },
+          field("Performers", e(EntityPicker, {
+            component: "PerformerSelect", multi: true, items: rule.performers,
+            onChange: function (items) { set("performers", items); },
           })),
           rule.children.map(function (c, i) {
             return e(RuleEditor, {
@@ -315,8 +433,10 @@
       libraryPaths().then(setLibs);
       readPluginSettings()
         .then(function (cfg) {
-          try { setRules(parseRules(cfg.rules).map(toForm)); }
-          catch (err) { setRules([]); setStatus({ dirty: false, saving: false, msg: null, err: "Stored rules are invalid: " + err.message }); }
+          var stored;
+          try { stored = parseRules(cfg.rules); }
+          catch (err) { setRules([]); setStatus({ dirty: false, saving: false, msg: null, err: "Stored rules are invalid: " + err.message }); return; }
+          return loadForm(stored).then(setRules);
         })
         .catch(function (err) { setRules([]); setStatus({ dirty: false, saving: false, msg: null, err: err.message }); });
     }, []);
@@ -337,8 +457,7 @@
       if (rawText !== null) {
         try { payload = parseRules(rawText); }
         catch (err) { setStatus(Object.assign({}, status, { err: "Invalid JSON: " + err.message })); return; }
-        setRules(payload.map(toForm));
-        setRawText(null);
+        loadForm(payload).then(function (forms) { setRules(forms); setRawText(null); });
       } else {
         payload = rules.map(fromForm);
       }
@@ -353,9 +472,12 @@
         return;
       }
       try {
-        setRules(parseRules(rawText).map(toForm));
-        setRawText(null);
-        setStatus({ dirty: true, saving: false, msg: null, err: null });
+        var parsed = parseRules(rawText);
+        loadForm(parsed).then(function (forms) {
+          setRules(forms);
+          setRawText(null);
+          setStatus({ dirty: true, saving: false, msg: null, err: null });
+        });
       } catch (err) {
         setStatus(Object.assign({}, status, { err: "Invalid JSON: " + err.message }));
       }
@@ -386,7 +508,7 @@
       e("h3", null, "Path rules"),
       e("p", { className: "text-muted small" },
         "New scenes, images and galleries whose path contains a rule's folder get that rule's studio, tags and performers. " +
-        "Names must match existing items in Stash exactly."),
+        "Pick tags, performers and the studio from your Stash library; names that no longer exist are flagged."),
       body,
       e("div", { className: "d-flex align-items-center mt-3", style: { gap: "0.5rem" } },
         e(B.Button, { variant: "primary", disabled: !status.dirty || status.saving, onClick: save },

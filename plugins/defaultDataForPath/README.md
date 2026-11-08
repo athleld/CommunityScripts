@@ -22,7 +22,7 @@ Big thanks to @WithoutPants - I based this entire script off of yours (markerTag
 ## Configuration
 
 - Open **Settings > Plugins > Default Data For Path**. A rule editor appears under the plugin entry:
-  - Add rules with a name, paths, studio, tags and performers (comma separated). **Browse…** opens Stash's folder picker, starting from your library folders.
+  - Add rules with a name, paths, studio, tags and performers. Studio, tags and performers use Stash's own pickers, which search your library as you type. **Browse…** opens Stash's folder picker, starting from your library folders.
   - Rules with no paths are grouping rules: their studio/tags/performers pass down to their **child rules**.
   - **Edit as JSON** shows the same rules in the format described under Examples, handy for pasting in an existing `jsonData` array.
   - Click **Save rules**. Rules are stored in the plugin setting `rules`.

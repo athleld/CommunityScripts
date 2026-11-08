@@ -1,0 +1,14 @@
+name: Auto Tag Review
+description: Proposes tags from scene titles, details and paths, with entity masking and per-tag rules, and lets you review them inline in the scene Tagger view.
+version: 0.2.0
+url: https://github.com/stashapp/CommunityScripts/tree/main/plugins/autoTagReview
+exec:
+  - python
+  - "{pluginDir}/autoTagReview.py"
+interface: raw
+ui:
+  javascript:
+    - matcher.js
+    - autoTagReview.js
+  css:
+    - autoTagReview.css

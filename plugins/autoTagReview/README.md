@@ -1,0 +1,55 @@
+# Auto Tag Review
+
+Proposes tags for scenes from their title, details and file path, and lets you
+review them inline in the scene **Tagger** view (`Scenes → Tagger`).
+
+Unlike substring auto-tagging, it:
+
+- matches whole words only ("Sweaty" never matches "SweatPants");
+- masks the scene's studio (and its parent), performers and groups before matching,
+  so "Guys in SweatPants" as a studio doesn't propose `Pants`;
+- never matches across punctuation or folder boundaries;
+- supports a stoplist ("welcome home") and per-tag rules in `rules.yaml`;
+- splits proposals into **auto** (pre-checked, green) and **review**
+  (unchecked, amber, dashed). Single words and matches from details default to review.
+
+## Use
+
+In the Tagger view:
+
+- **Auto-tag All / Auto-tag Selected** (header): proposes tags for every scene
+  on the page, or only the checked ones.
+- **Per scene**: click chips to toggle them. Hover a chip to see which phrase
+  matched, in which field, and what was masked. **Save** adds the checked tags.
+- **Save auto-tags** (header) adds all checked chips on the page.
+- **↻** reloads tags and `rules.yaml` on the next run.
+
+Tags are only ever **added** (`bulkSceneUpdate` in ADD mode). Nothing is removed.
+
+## Install
+
+Copy this folder into Stash's `plugins` directory and reload plugins.
+The backend needs Python with PyYAML (`pip install pyyaml`).
+On first run, `rules.example.yaml` is copied to `rules.yaml`. Edit that file;
+it is not overwritten by updates.
+
+## Rules
+
+See `rules.example.yaml` and `DESIGN.md`. Per tag (keyed by tag name):
+
+```yaml
+tags:
+  Home:
+    mode: review              # auto | review | never
+    match: ["at home"]         # extra phrases beyond name + aliases
+    exclude: ["welcome home"]  # skip if this phrase appears in the field
+    fields: [title, path]      # title | details | path
+  Pants:
+    require_any: { words: [off, pulled], window: 3 }
+```
+
+## Development
+
+```
+node --test plugins/autoTagReview/test/matcher.test.js
+```

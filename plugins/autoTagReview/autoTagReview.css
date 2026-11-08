@@ -1,0 +1,149 @@
+.atr-header {
+  display: flex;
+  align-items: center;
+  margin-right: 0.25rem;
+}
+.atr-header-inner {
+  display: flex;
+  align-items: center;
+}
+.atr-status {
+  font-size: 0.8rem;
+  opacity: 0.75;
+  margin-right: 0.5rem;
+  max-width: 22rem;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+.atr-reload {
+  font-size: 1.1rem;
+  line-height: 1;
+}
+
+.atr-row {
+  width: 100%;
+}
+.atr-panel {
+  display: flex;
+  align-items: center;
+  flex-wrap: wrap;
+  gap: 0.35rem;
+  margin-top: 0.4rem;
+  padding: 0.35rem 0.5rem;
+  border-top: 1px solid rgba(255, 255, 255, 0.08);
+  font-size: 0.85rem;
+}
+.atr-panel.atr-empty {
+  justify-content: flex-end;
+  border-top: none;
+  padding-top: 0;
+}
+.atr-label {
+  font-weight: 600;
+  opacity: 0.7;
+  margin-right: 0.25rem;
+}
+.atr-muted {
+  opacity: 0.6;
+}
+.atr-saved {
+  color: #5cb85c;
+}
+.atr-chips {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 0.3rem;
+  flex: 1 1 auto;
+}
+.atr-actions {
+  margin-left: auto;
+  display: flex;
+  gap: 0.3rem;
+}
+
+.atr-chip {
+  position: relative;
+  display: inline-flex;
+  align-items: center;
+  gap: 0.3rem;
+  padding: 0.1rem 0.5rem 0.1rem 0.3rem;
+  border-radius: 1rem;
+  border: 1px solid;
+  cursor: pointer;
+  user-select: none;
+  opacity: 0.7;
+}
+.atr-chip.is-on {
+  opacity: 1;
+}
+.atr-chip.is-disabled {
+  cursor: default;
+}
+.atr-chip.atr-auto {
+  border-color: #3d9a5b;
+}
+.atr-chip.atr-auto.is-on {
+  background: rgba(61, 154, 91, 0.3);
+}
+.atr-chip.atr-review {
+  border-color: #c99a2e;
+  border-style: dashed;
+}
+.atr-chip.atr-review.is-on {
+  background: rgba(201, 154, 46, 0.3);
+  border-style: solid;
+}
+.atr-chip-box {
+  display: inline-block;
+  width: 1rem;
+  height: 1rem;
+  line-height: 1rem;
+  text-align: center;
+  font-size: 0.7rem;
+  border-radius: 50%;
+  background: rgba(255, 255, 255, 0.12);
+}
+
+.atr-pop {
+  display: none;
+  position: absolute;
+  z-index: 1050;
+  top: calc(100% + 4px);
+  left: 0;
+  width: max-content;
+  max-width: 28rem;
+  padding: 0.4rem 0.5rem;
+  border-radius: 0.3rem;
+  background: #30404d;
+  color: #f5f8fa;
+  box-shadow: 0 4px 12px rgba(0, 0, 0, 0.5);
+  cursor: default;
+  white-space: normal;
+}
+.atr-chip:hover .atr-pop,
+.atr-chip:focus .atr-pop {
+  display: block;
+}
+.atr-ev + .atr-ev {
+  margin-top: 0.4rem;
+  padding-top: 0.4rem;
+  border-top: 1px solid rgba(255, 255, 255, 0.1);
+}
+.atr-ev-meta {
+  font-size: 0.75rem;
+  opacity: 0.7;
+  margin-bottom: 0.15rem;
+}
+.atr-ev-text {
+  word-break: break-word;
+}
+.atr-hit {
+  background: rgba(201, 154, 46, 0.55);
+  border-radius: 2px;
+  padding: 0 1px;
+}
+.atr-mask {
+  opacity: 0.45;
+  text-decoration: line-through;
+}
